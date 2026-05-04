@@ -32,27 +32,32 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Resolve API keys before any UI elements reference them
+# ─────────────────────────────────────────────────────────────────────────────
+
+anthropic_key = (
+    st.secrets.get("ANTHROPIC_API_KEY", "")
+    if hasattr(st, "secrets") else ""
+) or os.getenv("ANTHROPIC_API_KEY", "")
+if anthropic_key:
+    os.environ["ANTHROPIC_API_KEY"] = anthropic_key
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Sidebar
 # ─────────────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
     st.title("⚙️ Configuration")
 
-    # Resolve Anthropic key from secrets or env without exposing it in the UI
-    _anthropic_env = (
-        st.secrets.get("ANTHROPIC_API_KEY", "")
-        if hasattr(st, "secrets") else ""
-    ) or os.getenv("ANTHROPIC_API_KEY", "")
-    if _anthropic_env:
-        os.environ["ANTHROPIC_API_KEY"] = _anthropic_env
-    else:
-        anthropic_key = st.text_input(
+    if not anthropic_key:
+        _typed_key = st.text_input(
             "Anthropic API Key",
             value="",
             type="password",
             help="Required for AI market matching and trade recommendations.",
         )
-        if anthropic_key:
+        if _typed_key:
+            anthropic_key = _typed_key
             os.environ["ANTHROPIC_API_KEY"] = anthropic_key
 
     kalshi_key = st.text_input(
