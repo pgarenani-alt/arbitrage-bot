@@ -11,7 +11,7 @@ import random
 from typing import Optional
 from datetime import datetime, timedelta
 
-KALSHI_BASE = "https://trading.kalshi.com/trade-api/v2"
+KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
 HEADERS_BASE = {
     "Content-Type": "application/json",
     "User-Agent": "ArbitrageBot/1.0",
@@ -24,7 +24,7 @@ KALSHI_FEE_RATE = 0.07   # 7% of winnings on winning side
 def _auth_headers(api_key: Optional[str] = None) -> dict:
     key = api_key or os.getenv("KALSHI_API_KEY", "")
     if key:
-        return {**HEADERS_BASE, "kalshi-access-token": key}
+        return {**HEADERS_BASE, "Authorization": f"Bearer {key}"}
     return HEADERS_BASE
 
 

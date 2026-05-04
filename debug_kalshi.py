@@ -10,10 +10,10 @@ if not key:
     sys.exit(1)
 
 ENDPOINTS = [
-    ("trading.kalshi.com — kalshi-access-token", "https://trading.kalshi.com/trade-api/v2/markets",       {"kalshi-access-token": key}),
-    ("trading.kalshi.com — Bearer",              "https://trading.kalshi.com/trade-api/v2/markets",       {"Authorization": f"Bearer {key}"}),
+    ("elections.kalshi   — Bearer  [canonical]", "https://api.elections.kalshi.com/trade-api/v2/markets", {"Authorization": f"Bearer {key}"}),
     ("elections.kalshi   — kalshi-access-token", "https://api.elections.kalshi.com/trade-api/v2/markets", {"kalshi-access-token": key}),
-    ("elections.kalshi   — Bearer",              "https://api.elections.kalshi.com/trade-api/v2/markets", {"Authorization": f"Bearer {key}"}),
+    ("trading.kalshi.com — Bearer",              "https://trading.kalshi.com/trade-api/v2/markets",       {"Authorization": f"Bearer {key}"}),
+    ("trading.kalshi.com — kalshi-access-token", "https://trading.kalshi.com/trade-api/v2/markets",       {"kalshi-access-token": key}),
 ]
 
 PARAMS = {"status": "open", "limit": 5}

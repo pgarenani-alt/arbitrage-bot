@@ -186,18 +186,18 @@ def _debug_kalshi(api_key: str) -> str:
     import requests as _req
     lines = []
     combos = [
-        ("trading.kalshi.com + kalshi-access-token",
-         "https://trading.kalshi.com/trade-api/v2/markets",
-         {"kalshi-access-token": api_key}),
-        ("trading.kalshi.com + Bearer",
-         "https://trading.kalshi.com/trade-api/v2/markets",
+        ("elections.kalshi   + Bearer  [canonical]",
+         "https://api.elections.kalshi.com/trade-api/v2/markets",
          {"Authorization": f"Bearer {api_key}"}),
         ("elections.kalshi   + kalshi-access-token",
          "https://api.elections.kalshi.com/trade-api/v2/markets",
          {"kalshi-access-token": api_key}),
-        ("elections.kalshi   + Bearer",
-         "https://api.elections.kalshi.com/trade-api/v2/markets",
+        ("trading.kalshi.com + Bearer",
+         "https://trading.kalshi.com/trade-api/v2/markets",
          {"Authorization": f"Bearer {api_key}"}),
+        ("trading.kalshi.com + kalshi-access-token",
+         "https://trading.kalshi.com/trade-api/v2/markets",
+         {"kalshi-access-token": api_key}),
     ]
     base_headers = {"Content-Type": "application/json", "User-Agent": "ArbitrageBot/1.0"}
     for label, url, auth in combos:
