@@ -60,14 +60,32 @@ with st.sidebar:
             anthropic_key = _typed_key
             os.environ["ANTHROPIC_API_KEY"] = anthropic_key
 
-    kalshi_key = st.text_input(
-        "Kalshi API Key (optional)",
-        value=os.getenv("KALSHI_API_KEY", ""),
-        type="password",
-        help="Leave blank to use demo market data.",
-    )
-    if kalshi_key:
-        os.environ["KALSHI_API_KEY"] = kalshi_key
+    # Kalshi uses RSA-PSS signing — needs a Key ID + PEM private key
+    _kalshi_kid = (
+        st.secrets.get("KALSHI_KEY_ID", "") if hasattr(st, "secrets") else ""
+    ) or os.getenv("KALSHI_KEY_ID", "")
+    _kalshi_pem = (
+        st.secrets.get("KALSHI_PRIVATE_KEY", "") if hasattr(st, "secrets") else ""
+    ) or os.getenv("KALSHI_PRIVATE_KEY", "")
+
+    if not _kalshi_kid:
+        _kalshi_kid = st.text_input(
+            "Kalshi Key ID (optional)",
+            value="",
+            type="password",
+            help="Access-key ID from your Kalshi dashboard. Leave blank for demo mode.",
+        )
+    if not _kalshi_pem:
+        _kalshi_pem = st.text_area(
+            "Kalshi Private Key PEM (optional)",
+            value="",
+            height=100,
+            help="Paste your RSA private key (-----BEGIN RSA PRIVATE KEY-----…). Leave blank for demo mode.",
+        )
+
+    kalshi_key_id  = _kalshi_kid.strip()
+    kalshi_pem     = _kalshi_pem.strip()
+    kalshi_live    = bool(kalshi_key_id and kalshi_pem)
 
     st.divider()
     st.subheader("Filters")
@@ -78,10 +96,10 @@ with st.sidebar:
     n_markets  = st.slider("Markets to fetch per platform", 20, 150, 75, 5)
 
     st.divider()
-    if kalshi_key:
+    if kalshi_live:
         if st.button("🔬 Debug Kalshi API", use_container_width=True):
             with st.spinner("Testing Kalshi endpoints…"):
-                report = _debug_kalshi(kalshi_key)
+                report = _debug_kalshi(kalshi_key_id, kalshi_pem)
             st.session_state["kalshi_debug"] = report
         if "kalshi_debug" in st.session_state:
             with st.expander("Kalshi debug output", expanded=True):
@@ -111,9 +129,9 @@ _tab_scan, _tab_explain, _tab_model = st.tabs(
 # ─────────────────────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=120, show_spinner=False)
-def _fetch_kalshi(n: int, _kalshi_key: str):
+def _fetch_kalshi(n: int, _key_id: str, _pem: str):
     # Separate cached function so a Kalshi error doesn't also bust the Poly cache
-    return kalshi_markets(limit=n, api_key=_kalshi_key or None)
+    return kalshi_markets(limit=n, key_id=_key_id or None, private_key_pem=_pem or None)
 
 @st.cache_data(ttl=120, show_spinner=False)
 def _fetch_poly(n: int):
@@ -181,29 +199,31 @@ def _price_bar(km: dict, pm: dict) -> go.Figure:
     return fig
 
 
-def _debug_kalshi(api_key: str) -> str:
-    """Hit several Kalshi URL/header combos and return a readable report."""
+def _debug_kalshi(key_id: str, private_key_pem: str) -> str:
+    """Test RSA-PSS signed requests against both Kalshi base URLs."""
+    from src.kalshi_client import _load_private_key, _sign_headers
     import requests as _req
+
     lines = []
-    combos = [
-        ("elections.kalshi   + Bearer  [canonical]",
+
+    try:
+        pk = _load_private_key(private_key_pem)
+    except Exception as e:
+        return f"**Private key parse error:** {e}"
+
+    urls = [
+        ("api.elections.kalshi.com  [canonical]",
          "https://api.elections.kalshi.com/trade-api/v2/markets",
-         {"Authorization": f"Bearer {api_key}"}),
-        ("elections.kalshi   + kalshi-access-token",
-         "https://api.elections.kalshi.com/trade-api/v2/markets",
-         {"kalshi-access-token": api_key}),
-        ("trading.kalshi.com + Bearer",
+         "/trade-api/v2/markets"),
+        ("trading.kalshi.com        [legacy]",
          "https://trading.kalshi.com/trade-api/v2/markets",
-         {"Authorization": f"Bearer {api_key}"}),
-        ("trading.kalshi.com + kalshi-access-token",
-         "https://trading.kalshi.com/trade-api/v2/markets",
-         {"kalshi-access-token": api_key}),
+         "/trade-api/v2/markets"),
     ]
-    base_headers = {"Content-Type": "application/json", "User-Agent": "ArbitrageBot/1.0"}
-    for label, url, auth in combos:
+    for label, url, path in urls:
         try:
+            headers = _sign_headers(key_id, pk, "GET", path)
             r = _req.get(url, params={"status": "open", "limit": 3},
-                         headers={**base_headers, **auth}, timeout=8)
+                         headers=headers, timeout=8)
             body = r.text[:500]
             n = len((r.json() if r.ok else {}).get("markets") or [])
             lines.append(f"**{label}**\n`{r.status_code}` — {n} markets\n```\n{body}\n```")
@@ -250,7 +270,7 @@ with _tab_scan:
         with st.spinner("Fetching markets from Kalshi & Polymarket…"):
             km_list = []
             try:
-                km_list = _fetch_kalshi(n_markets, kalshi_key)
+                km_list = _fetch_kalshi(n_markets, kalshi_key_id, kalshi_pem)
             except Exception as e:
                 st.error(f"Kalshi fetch error: {e}")
 
@@ -262,13 +282,13 @@ with _tab_scan:
 
             # Determine whether Kalshi data is live or synthetic demo
             is_demo = not km_list or any(m.get("is_demo") for m in km_list)
-            if kalshi_key and is_demo:
+            if kalshi_live and is_demo:
                 kalshi_source = "demo (live API unreachable)"
                 st.warning("Kalshi live API unreachable — showing synthetic demo markets derived from live Polymarket prices.", icon="⚠️")
-            elif kalshi_key:
+            elif kalshi_live:
                 kalshi_source = "live API"
             else:
-                kalshi_source = "demo (no key)"
+                kalshi_source = "demo (no credentials)"
             status_placeholder.success(
                 f"Fetched {len(km_list)} Kalshi ({kalshi_source}) + {len(pm_list)} Polymarket markets"
             )
