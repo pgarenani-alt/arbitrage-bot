@@ -54,15 +54,23 @@ def _get(path: str, params: dict = None, api_key: str = None, retries: int = 3) 
 
 def get_active_markets(limit: int = 100, api_key: str = None) -> list[dict]:
     """
-    Fetch open Kalshi markets.  Falls back to demo data if no API key.
+    Fetch open Kalshi markets.
+    Falls back to synthetic demo data when:
+      - no API key is provided, OR
+      - the live API call fails for any reason (DNS error, auth failure, timeout)
     Returns a list of normalised market dicts (same schema as polymarket_client).
     """
-    # ── live path ──────────────────────────────────────────────────────────
     key = api_key or os.getenv("KALSHI_API_KEY", "")
     if key:
-        data = _get("/markets", params={"status": "open", "limit": limit}, api_key=key)
-        raw = data.get("markets") or []
-        return [m for m in (_normalise(r) for r in raw) if m]
+        try:
+            data = _get("/markets", params={"status": "open", "limit": limit}, api_key=key)
+            raw = data.get("markets") or []
+            markets = [m for m in (_normalise(r) for r in raw) if m]
+            if markets:
+                return markets
+            # Empty result — fall through to demo
+        except Exception:
+            pass  # DNS error, auth failure, timeout, etc. — fall through to demo
 
     # ── demo fallback: mirror live Polymarket markets with synthetic offsets ──
     return _demo_markets_from_polymarket(limit)

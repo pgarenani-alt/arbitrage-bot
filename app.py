@@ -248,7 +248,6 @@ with _tab_scan:
 
     if run_scan or "opportunities" not in st.session_state:
         with st.spinner("Fetching markets from Kalshi & Polymarket…"):
-            # Fetch separately so a Kalshi error is visible and doesn't block Poly
             km_list = []
             try:
                 km_list = _fetch_kalshi(n_markets, kalshi_key)
@@ -261,9 +260,17 @@ with _tab_scan:
             except Exception as e:
                 st.error(f"Polymarket fetch error: {e}")
 
-            source = "live API" if kalshi_key else "demo (no key)"
+            # Determine whether Kalshi data is live or synthetic demo
+            is_demo = not km_list or any(m.get("is_demo") for m in km_list)
+            if kalshi_key and is_demo:
+                kalshi_source = "demo (live API unreachable)"
+                st.warning("Kalshi live API unreachable — showing synthetic demo markets derived from live Polymarket prices.", icon="⚠️")
+            elif kalshi_key:
+                kalshi_source = "live API"
+            else:
+                kalshi_source = "demo (no key)"
             status_placeholder.success(
-                f"Fetched {len(km_list)} Kalshi ({source}) + {len(pm_list)} Polymarket markets"
+                f"Fetched {len(km_list)} Kalshi ({kalshi_source}) + {len(pm_list)} Polymarket markets"
             )
 
         if km_list or pm_list:
