@@ -40,7 +40,7 @@ with st.sidebar:
 
     anthropic_key = st.text_input(
         "Anthropic API Key",
-        value=os.getenv("ANTHROPIC_API_KEY", ""),
+        value="",
         type="password",
         help="Required for AI market matching and trade recommendations.",
     )
