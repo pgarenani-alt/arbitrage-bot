@@ -68,8 +68,9 @@ def _get_active_markets_live(limit: int = 100, category: str = None) -> list[dic
             slug = m.get("slug") or ""
             condition_id = m.get("conditionId") or m.get("id") or ""
             # Gamma API slugs have a trailing numeric ID suffix (e.g. "event-name-837")
-            # that Polymarket's frontend doesn't use — strip it for valid URLs.
-            clean_slug = re.sub(r"-\d+$", "", slug) if slug else ""
+            # that Polymarket's frontend doesn't use — strip it.
+            # Preserve 4-digit years (20XX) which are legitimate parts of slugs.
+            clean_slug = re.sub(r"-(?!20\d{2}$)\d+$", "", slug) if slug else ""
             if clean_slug:
                 poly_url = f"https://polymarket.com/event/{clean_slug}"
             elif condition_id:

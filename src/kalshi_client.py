@@ -158,9 +158,11 @@ def _demo_markets_from_polymarket(limit: int = 100) -> list[dict]:
 
             slug = m.get("slug") or ""
             condition_id = m.get("conditionId") or m.get("id") or ""
-            # Build the real Polymarket URL for this market (the source data)
-            if slug:
-                poly_url = f"https://polymarket.com/event/{slug}"
+            # Gamma API slugs have a trailing numeric ID suffix — strip it.
+            # Preserve 4-digit years (20XX) which are legitimate parts of slugs.
+            clean_slug = re.sub(r"-(?!20\d{2}$)\d+$", "", slug) if slug else ""
+            if clean_slug:
+                poly_url = f"https://polymarket.com/event/{clean_slug}"
             elif condition_id:
                 poly_url = f"https://polymarket.com/markets/{condition_id}"
             else:

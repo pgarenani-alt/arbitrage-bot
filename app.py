@@ -303,7 +303,7 @@ with _tab_scan:
             except Exception:
                 return "color:#1a1a1a"
 
-        styled = df_display[display_cols].style.applymap(style_conf, subset=["ML Confidence"])
+        styled = df_display[display_cols].style.map(style_conf, subset=["ML Confidence"])
         st.dataframe(styled, use_container_width=True, hide_index=True)
 
         # Row selector
