@@ -431,7 +431,7 @@ with _tab_model:
     # Show training report if available
     report_path = os.path.join(os.path.dirname(__file__), "models", "training_report.txt")
     if os.path.exists(report_path):
-        with open(report_path) as f:
+        with open(report_path, encoding="utf-8") as f:
             report = f.read()
         with st.expander("Training Report", expanded=True):
             st.code(report)
