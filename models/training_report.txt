@@ -1,0 +1,29 @@
+Training Date : 2026-05-04T03:34:18.882762+00:00
+ML Task       : Predict resolved_yes from pre-resolution market features
+Training rows : 2000
+Test rows     : 500
+Features      : ['yes_price', 'log_volume', 'days_to_resolution', 'category_enc', 'price_confidence', 'extreme_price', 'log_vol_x_price']
+
+Test ROC-AUC  : 0.7647
+Test Avg-PR   : 0.7495
+Brier Score   : 0.1978
+CV ROC-AUC    : 0.7619 ± 0.0224
+
+Feature Importances:
+  yes_price                 0.3680
+  log_vol_x_price           0.1582
+  price_confidence          0.1515
+  log_volume                0.1144
+  days_to_resolution        0.1043
+  category_enc              0.1037
+  extreme_price             0.0000
+
+Classification Report:
+              precision    recall  f1-score   support
+
+          NO       0.69      0.68      0.69       249
+         YES       0.69      0.70      0.69       251
+
+    accuracy                           0.69       500
+   macro avg       0.69      0.69      0.69       500
+weighted avg       0.69      0.69      0.69       500
