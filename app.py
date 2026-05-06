@@ -213,13 +213,10 @@ with _tab_scan:
             except Exception as e:
                 st.error(f"Polymarket fetch error: {e}")
 
-            # Count real vs synthetic Kalshi markets
             n_live  = sum(1 for m in km_list if not m.get("is_demo"))
             n_synth = sum(1 for m in km_list if m.get("is_demo"))
-            if n_live and n_synth:
-                kalshi_source = f"{n_live} live + {n_synth} synthetic"
-            elif n_live:
-                kalshi_source = "live (public API)"
+            if n_live:
+                kalshi_source = "live · public API"
             else:
                 kalshi_source = "synthetic demo"
             status_placeholder.success(
@@ -327,8 +324,10 @@ with _tab_explain:
         st.markdown("### Trade Instructions")
         trade_cols = st.columns(2)
 
-        _kalshi_is_demo = opp.get("kalshi_url", "").startswith("https://polymarket.com")
-        _kalshi_link_label = "View on Polymarket (demo mode) ↗" if _kalshi_is_demo else "Open on Kalshi ↗"
+        # Kalshi URL is real only when it points to kalshi.com
+        _kalshi_url       = opp.get("kalshi_url", "")
+        _kalshi_is_live   = _kalshi_url.startswith("https://kalshi.com/markets/")
+        _kalshi_link_label = "Open on Kalshi ↗" if _kalshi_is_live else "Demo market — no live Kalshi link"
 
         with trade_cols[0]:
             st.markdown(
@@ -338,7 +337,7 @@ with _tab_explain:
                 <p style="font-size:20px;margin:8px 0;color:#111111">
                   <b>{opp['kalshi_platform_action']}</b> @ <b>{opp['kalshi_trade_price']:.3f}</b>
                 </p>
-                <a href="{opp['kalshi_url']}" target="_blank" style="color:#1565c0">{_kalshi_link_label}</a>
+                {"<a href='" + _kalshi_url + "' target='_blank' style='color:#1565c0'>" + _kalshi_link_label + "</a>" if _kalshi_is_live else "<span style='color:#999'>" + _kalshi_link_label + "</span>"}
                 </div>
                 """, unsafe_allow_html=True
             )

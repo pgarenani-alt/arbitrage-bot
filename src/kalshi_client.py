@@ -108,31 +108,20 @@ def get_active_markets(limit: int = 100,
                        private_key_pem: str = None,
                        api_key: str = None) -> list[dict]:
     """
-    Fetch Kalshi markets — hybrid strategy:
-
-    1. Pull real markets from the public Kalshi REST API (no auth needed).
-       These are genuine Kalshi prices but tend to be niche/long-dated markets
-       with low volume and little Polymarket overlap.
-    2. Fill remaining slots with synthetic markets derived from live Polymarket
-       data (same method as pure demo mode).  These have the phrasing and
-       volume characteristics needed for the arbitrage pipeline to produce
-       meaningful cross-platform comparisons.
-
-    Result: the status bar always shows real Kalshi data was fetched, and the
-    bot always has enough matching pairs for a useful demo.
+    Fetch real Kalshi markets from the public REST API (no auth needed).
+    Falls back to synthetic demo data ONLY if the public API is unreachable.
+    Synthetic data is intentionally avoided when the live API works because
+    it produces mismatched pairs with nonsensical price discrepancies.
     """
-    live: list[dict] = []
     try:
-        live = _fetch_live_markets(min(limit, 50))   # cap live fetch to 50
+        live = _fetch_live_markets(limit)
+        if live:
+            return live
     except Exception:
         pass
 
-    n_synthetic = max(limit - len(live), limit // 2)   # at least half synthetic
-    synthetic   = _demo_markets_from_polymarket(n_synthetic)
-
-    # Combine: live markets first, then synthetic to fill out the list
-    combined = live + synthetic
-    return combined[:limit]
+    # True fallback — public API completely unreachable
+    return _demo_markets_from_polymarket(limit)
 
 
 def _fetch_live_markets(limit: int) -> list[dict]:

@@ -23,6 +23,8 @@ MODEL_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "models")
 KALSHI_FEE     = 0.07   # 7% of winnings (on winning trade)
 POLY_FEE_ROUND = 0.02   # ~2% round-trip on Polymarket
 MIN_PROFIT_PCT = 1.0    # only surface opportunities with >1% expected profit
+MAX_PROFIT_PCT = 20.0   # cap: >20% gross profit = almost certainly a bad match, not real arb
+                        # (real prediction market arb is 2-8% at most)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -202,6 +204,8 @@ def _compute_opportunity(km: dict, pm: dict, match_meta: dict) -> Optional[dict]
 
     if gross_profit <= 0:
         return None   # no arbitrage
+    if gross_profit > MAX_PROFIT_PCT / 100:
+        return None   # implausibly large — almost certainly a mismatched pair
 
     days = _days_until(km.get("end_date", "") or pm.get("end_date", ""))
     category = km.get("category") or pm.get("category") or "other"
