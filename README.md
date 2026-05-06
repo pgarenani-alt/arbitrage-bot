@@ -127,5 +127,5 @@ After fees (~4–5% round-trip), net profit ≈ 5–6%. The engine caps gross pr
 ## Data Sources
 
 - **Polymarket**: `https://gamma-api.polymarket.com/markets` — public, no auth required
-- **Kalshi**: [Trade API v2](https://trading-api.readme.io/reference/getmarkets) — public REST API, no auth required for market data. Note: REST APIs cannot be opened in a browser like a website — the app calls specific endpoints programmatically in the background. To verify the API is live, open this in a browser: [`/events?status=open&limit=5`](https://external-api.kalshi.com/trade-api/v2/events?status=open&limit=5) — it will return real Kalshi market data as JSON.
+- **Kalshi**: [Trade API v2](https://trading-api.readme.io/reference/getmarkets) — public REST API, no auth required for market data. Note: REST APIs cannot be opened in a browser like a website — the app calls specific endpoints programmatically in the background. To verify the API is live, open this in a browser: [`/events?status=open&limit=5`](https://external-api.kalshi.com/trade-api/v2/events?status=open&limit=200) — it will return real Kalshi market data as JSON.
 - **Training data**: ~1,000 resolved Polymarket markets fetched via the Gamma API
