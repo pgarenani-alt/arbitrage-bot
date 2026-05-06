@@ -243,6 +243,7 @@ def _compute_opportunity(km: dict, pm: dict, match_meta: dict) -> Optional[dict]
         "poly_url":           pm.get("url", ""),
         "match_confidence":   match_meta.get("confidence", "medium"),
         "match_reasoning":    match_meta.get("reasoning", ""),
+        "match_method":       match_meta.get("method", "unknown"),
     }
 
     # ML score
@@ -260,43 +261,70 @@ def find_opportunities(
     poly_markets:    list[dict],
     use_ai_matching: bool = True,
     min_profit_pct:  float = MIN_PROFIT_PCT,
-) -> list[dict]:
+) -> tuple[list[dict], dict]:
     """
-    Main entry point.  Returns a sorted list of arbitrage opportunities.
+    Main entry point.
+
+    Returns:
+        opportunities — sorted list of arbitrage opportunity dicts
+        stats         — match-method breakdown:
+                        {"total_kalshi": n, "claude": n, "embedding": n,
+                         "keyword": n, "skipped": n}
     """
     opportunities = []
     used_poly_ids = set()
+    matched_kalshi_ids: set[str] = set()
+
+    ai_stats = {"claude": 0, "embedding": 0}
 
     if use_ai_matching:
         try:
             from src.market_matcher import bulk_match
-            matched_triples = bulk_match(kalshi_markets, poly_markets)
+            matched_triples, ai_stats = bulk_match(kalshi_markets, poly_markets)
             for km, pm, meta in matched_triples:
                 opp = _compute_opportunity(km, pm, meta)
                 if opp and opp["expected_profit_pct"] >= min_profit_pct:
                     opportunities.append(opp)
                     used_poly_ids.add(pm["id"])
+                matched_kalshi_ids.add(km["id"])
         except Exception:
             pass   # fall through to keyword matcher
 
-    # Keyword fallback for any unmatched Kalshi markets
+    # Tier 3 — Keyword fallback for any Kalshi markets not matched by AI tiers
+    keyword_count = 0
     for km in kalshi_markets:
+        if km["id"] in matched_kalshi_ids:
+            continue
         if any(o["kalshi_id"] == km["id"] for o in opportunities):
             continue
         unmatched_poly = [p for p in poly_markets if p["id"] not in used_poly_ids]
         pm = _keyword_match(km, unmatched_poly)
         if pm:
-            opp = _compute_opportunity(km, pm, {"confidence": "medium", "reasoning": "keyword overlap"})
+            opp = _compute_opportunity(
+                km, pm,
+                {"confidence": "medium", "reasoning": "keyword overlap", "method": "keyword"},
+            )
             if opp and opp["expected_profit_pct"] >= min_profit_pct:
                 opportunities.append(opp)
                 used_poly_ids.add(pm["id"])
+            keyword_count += 1
 
     # Sort by ML confidence × expected profit
     opportunities.sort(
         key=lambda o: o["ml_confidence"] * o["expected_profit_pct"],
         reverse=True,
     )
-    return opportunities
+
+    n_total   = len(kalshi_markets)
+    n_matched = ai_stats["claude"] + ai_stats["embedding"] + keyword_count
+    stats = {
+        "total_kalshi": n_total,
+        "claude":        ai_stats["claude"],
+        "embedding":     ai_stats["embedding"],
+        "keyword":       keyword_count,
+        "skipped":       max(0, n_total - n_matched),
+    }
+    return opportunities, stats
 
 
 def opportunities_to_dataframe(opportunities: list[dict]) -> pd.DataFrame:

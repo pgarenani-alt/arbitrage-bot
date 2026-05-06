@@ -143,6 +143,7 @@ def _find_opps(kalshi_json: str, poly_json: str, use_ai: bool, min_profit: float
     import json
     km = json.loads(kalshi_json)
     pm = json.loads(poly_json)
+    # Returns (list[dict], stats_dict) since the engine upgrade
     return find_opportunities(km, pm, use_ai_matching=use_ai, min_profit_pct=min_profit)
 
 
@@ -296,16 +297,17 @@ with _tab_scan:
         if km_list or pm_list:
             with st.spinner("Matching markets and detecting arbitrage…"):
                 import json
-                opps = _find_opps(
+                opps, match_stats = _find_opps(
                     json.dumps(km_list), json.dumps(pm_list),
                     use_ai and bool(anthropic_key),
                     min_profit,
                 )
             # filter by min volume
             opps = [o for o in opps if o.get("min_volume_usd", 0) >= min_vol]
-            st.session_state["opportunities"] = opps
-            st.session_state["km_list"]       = km_list
-            st.session_state["pm_list"]       = pm_list
+            st.session_state["opportunities"]  = opps
+            st.session_state["km_list"]        = km_list
+            st.session_state["pm_list"]        = pm_list
+            st.session_state["match_stats"]    = match_stats
 
     opps = st.session_state.get("opportunities", [])
 
@@ -321,6 +323,16 @@ with _tab_scan:
 
     # ── Opportunities table ───────────────────────────────────────────────────
     df_display = opportunities_to_dataframe(opps)
+
+    # ── AI match-method statistics ───────────────────────────────────────────
+    _ms = st.session_state.get("match_stats")
+    if _ms:
+        _parts = [f"**{_ms['total_kalshi']}** Kalshi markets evaluated"]
+        if _ms.get("claude",    0): _parts.append(f"**{_ms['claude']}** matched via Claude")
+        if _ms.get("embedding", 0): _parts.append(f"**{_ms['embedding']}** via embeddings (cosine sim)")
+        if _ms.get("keyword",   0): _parts.append(f"**{_ms['keyword']}** via keyword overlap")
+        if _ms.get("skipped",   0): _parts.append(f"**{_ms['skipped']}** unmatched")
+        st.caption("🤖 Matching pipeline — " + " · ".join(_parts))
 
     if df_display.empty:
         st.info(
@@ -444,6 +456,7 @@ with _tab_explain:
         with st.expander("Match metadata"):
             st.write(f"**Kalshi question:** {opp['kalshi_question']}")
             st.write(f"**Polymarket question:** {opp['poly_question']}")
+            st.write(f"**Match method:** {opp.get('match_method', 'unknown').title()}")
             st.write(f"**Match confidence:** {opp['match_confidence']}")
             st.write(f"**Reasoning:** {opp['match_reasoning']}")
             st.write(f"**Days to resolution:** {opp['days_to_resolution']}")

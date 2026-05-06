@@ -1,10 +1,13 @@
 """
 AI-powered market matching — Component B of the course project.
 
-Uses Claude to:
-  1. Semantically match Kalshi markets to Polymarket markets
-     (the platforms describe the same event with different wording)
-  2. Generate a plain-English trade recommendation for each matched pair
+Three-tier matching pipeline:
+  Tier 1 — Claude Haiku (LLM semantic matching): fast batch inference via API.
+  Tier 2 — Sentence-transformer cosine similarity (embeddings): all-MiniLM-L6-v2
+            encodes each question to a dense vector; cosine similarity ≥ 0.65
+            qualifies as a match.  This tier makes explicit use of the
+            sentence-embedding and cosine-similarity concepts from the course.
+  Tier 3 — Jaccard keyword overlap fallback: classical NLP baseline.
 
 Claude model used: claude-haiku-4-5-20251001 (fast, cheap for batch matching)
                    claude-sonnet-4-6 for the richer trade explanation
@@ -12,9 +15,71 @@ Claude model used: claude-haiku-4-5-20251001 (fast, cheap for batch matching)
 import os
 import json
 import anthropic
+import numpy as np
 from typing import Optional
 
 _client: Optional[anthropic.Anthropic] = None
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Sentence-transformer singleton (lazy-loaded on first use)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_embedding_model = None
+
+
+def _get_embedding_model():
+    """Lazy-load the sentence-transformer model (cached for the process lifetime)."""
+    global _embedding_model
+    if _embedding_model is None:
+        from sentence_transformers import SentenceTransformer
+        _embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+    return _embedding_model
+
+
+def _embedding_match(
+    kalshi_question: str,
+    poly_questions: list[str],
+    threshold: float = 0.65,
+) -> dict:
+    """
+    Tier-2 matcher: encode questions with all-MiniLM-L6-v2 and return the
+    Polymarket candidate with highest cosine similarity, provided it meets
+    the confidence threshold.
+
+    Returns the same dict shape as match_markets() with an extra "method" key.
+    """
+    if not poly_questions:
+        return {"best_match_index": None, "confidence": "low",
+                "reasoning": "No candidates.", "method": "embedding"}
+    try:
+        model = _get_embedding_model()
+        # Encode all strings in one batch (faster than individual encode calls)
+        all_texts = [kalshi_question] + list(poly_questions)
+        embeddings = model.encode(all_texts, convert_to_numpy=True, normalize_embeddings=True)
+        k_emb  = embeddings[0]          # shape (dim,)
+        p_embs = embeddings[1:]          # shape (n_candidates, dim)
+        # Cosine similarity = dot product when vectors are L2-normalised
+        sims      = np.dot(p_embs, k_emb)   # shape (n_candidates,)
+        best_idx  = int(np.argmax(sims))
+        best_sim  = float(sims[best_idx])
+        if best_sim >= threshold:
+            conf = "high" if best_sim >= 0.80 else "medium"
+            return {
+                "best_match_index": best_idx,
+                "confidence": conf,
+                "reasoning":  f"Embedding cosine similarity {best_sim:.3f}",
+                "method":     "embedding",
+            }
+    except Exception as e:
+        return {
+            "best_match_index": None, "confidence": "low",
+            "reasoning": f"Embedding unavailable: {e}", "method": "embedding",
+        }
+    return {
+        "best_match_index": None, "confidence": "low",
+        "reasoning": f"Best cosine sim {best_sim:.3f} < threshold {threshold}",
+        "method": "embedding",
+    }
 
 
 def _get_client() -> anthropic.Anthropic:
@@ -171,25 +236,47 @@ ML model confidence that this is a genuine, fee-profitable opportunity: {opportu
 # 3. Bulk matching helper (used by arbitrage_engine)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def bulk_match(kalshi_markets: list[dict], poly_markets: list[dict]) -> list[tuple[dict, dict, dict]]:
+def bulk_match(
+    kalshi_markets: list[dict],
+    poly_markets: list[dict],
+) -> tuple[list[tuple[dict, dict, dict]], dict]:
     """
-    For each Kalshi market, find the best Polymarket partner.
-    Returns list of (kalshi_market, poly_market, match_meta) triples
-    where confidence is "high" or "medium".
+    Three-tier matching pipeline for each Kalshi market:
+
+      Tier 1 — Claude Haiku  : LLM semantic matching (preferred, highest quality)
+      Tier 2 — Embeddings     : sentence-transformer cosine similarity ≥ 0.65
+      (Tier 3 keyword fallback runs in arbitrage_engine.py for any remaining markets)
+
+    Returns:
+        matched  — list of (kalshi_market, poly_market, match_meta) triples
+        stats    — {"claude": n, "embedding": n}  (count per method)
     """
     poly_questions = [m["question"] for m in poly_markets]
-    matched = []
+    matched: list[tuple[dict, dict, dict]] = []
+    stats   = {"claude": 0, "embedding": 0}
 
     for km in kalshi_markets:
+        # ── Tier 1: Claude Haiku ─────────────────────────────────────────────
         result = match_markets(km["question"], poly_questions)
-        idx = result.get("best_match_index")
-        conf = result.get("confidence", "low")
+        idx    = result.get("best_match_index")
+        conf   = result.get("confidence", "low")
 
-        if idx is None or conf == "low":
+        if conf in ("high", "medium") and idx is not None and idx < len(poly_markets):
+            result["method"] = "claude"
+            matched.append((km, poly_markets[idx], result))
+            stats["claude"] += 1
             continue
-        if idx >= len(poly_markets):
+
+        # ── Tier 2: Sentence-transformer cosine similarity ───────────────────
+        result2 = _embedding_match(km["question"], poly_questions)
+        idx2    = result2.get("best_match_index")
+        conf2   = result2.get("confidence", "low")
+
+        if conf2 in ("high", "medium") and idx2 is not None and idx2 < len(poly_markets):
+            matched.append((km, poly_markets[idx2], result2))
+            stats["embedding"] += 1
             continue
 
-        matched.append((km, poly_markets[idx], result))
+        # No match from either AI tier — will fall through to keyword in engine
 
-    return matched
+    return matched, stats
