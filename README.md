@@ -33,6 +33,10 @@ The app opens at `http://localhost:8501`.
 
 ## API Keys
 
+The live demo at the link above is fully configured — no API key needed to use it.
+
+If running locally:
+
 | Key | Required? | Where to get it |
 |-----|-----------|-----------------|
 | `ANTHROPIC_API_KEY` | **Yes** (for Claude AI matching + trade analysis) | [console.anthropic.com](https://console.anthropic.com) |
