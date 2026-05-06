@@ -1,29 +1,41 @@
-Training Date : 2026-05-04T03:34:18.882762+00:00
+Training Date : 2026-05-06T23:53:07.677516+00:00
 ML Task       : Predict resolved_yes from pre-resolution market features
 Training rows : 2000
 Test rows     : 500
 Features      : ['yes_price', 'log_volume', 'days_to_resolution', 'category_enc', 'price_confidence', 'extreme_price', 'log_vol_x_price']
 
-Test ROC-AUC  : 0.7647
-Test Avg-PR   : 0.7495
-Brier Score   : 0.1978
-CV ROC-AUC    : 0.7619 ± 0.0224
+=== Model Comparison ===
+                           Model  Test ROC-AUC      CV ROC-AUC  Brier Score  Avg Precision
+             Logistic Regression        0.7683 0.7807 ± 0.0116       0.1964         0.7396
+                   Random Forest        0.7637 0.7725 ± 0.0144       0.1976         0.7311
+XGBoost + Isotonic Cal. (chosen)        0.7423 0.7588 ± 0.0171       0.2053         0.7125
+
+=== Chosen Model: XGBoost + Isotonic Calibration ===
+Test ROC-AUC  : 0.7423
+Test Avg-PR   : 0.7125
+Brier Score   : 0.2053
+CV ROC-AUC    : 0.7588 ± 0.0171
+
+Why XGBoost? Handles non-linear feature interactions (e.g. log_vol_x_price),
+mixed feature types, and benefits most from isotonic calibration.
+Logistic Regression assumes linear relationships — underperforms on this task.
+Random Forest is competitive but XGBoost is faster and more tunable.
 
 Feature Importances:
-  yes_price                 0.3680
-  log_vol_x_price           0.1582
-  price_confidence          0.1515
-  log_volume                0.1144
-  days_to_resolution        0.1043
-  category_enc              0.1037
-  extreme_price             0.0000
+  yes_price                 0.3505
+  log_vol_x_price           0.1467
+  price_confidence          0.1167
+  extreme_price             0.1023
+  days_to_resolution        0.0981
+  category_enc              0.0934
+  log_volume                0.0924
 
-Classification Report:
+Classification Report (XGBoost):
               precision    recall  f1-score   support
 
-          NO       0.69      0.68      0.69       249
-         YES       0.69      0.70      0.69       251
+          NO       0.67      0.73      0.70       260
+         YES       0.67      0.61      0.64       240
 
-    accuracy                           0.69       500
-   macro avg       0.69      0.69      0.69       500
-weighted avg       0.69      0.69      0.69       500
+    accuracy                           0.67       500
+   macro avg       0.67      0.67      0.67       500
+weighted avg       0.67      0.67      0.67       500

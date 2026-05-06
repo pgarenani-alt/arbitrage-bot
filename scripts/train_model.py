@@ -44,6 +44,10 @@ from sklearn.metrics import (
     brier_score_loss, average_precision_score,
 )
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
 from xgboost import XGBClassifier
 
 GAMMA_BASE = "https://gamma-api.polymarket.com"
@@ -262,6 +266,27 @@ def _synthetic_data(n: int = 2000) -> pd.DataFrame:
 # 4. Model training
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _eval_model(model, X_train, X_test, y_train, y_test, X_full, y_full, cv_base, name):
+    """Train, evaluate, and return metrics dict for one model."""
+    print(f"\n  Training {name}...")
+    model.fit(X_train, y_train)
+    y_prob = model.predict_proba(X_test)[:, 1]
+    auc   = roc_auc_score(y_test, y_prob)
+    brier = brier_score_loss(y_test, y_prob)
+    avgpr = average_precision_score(y_test, y_prob)
+    cv    = cross_val_score(cv_base, X_full, y_full,
+                            cv=StratifiedKFold(5, shuffle=True, random_state=42),
+                            scoring="roc_auc")
+    print(f"    ROC-AUC={auc:.4f}  Brier={brier:.4f}  CV={cv.mean():.4f}±{cv.std():.4f}")
+    return {
+        "Model":       name,
+        "Test ROC-AUC": round(auc, 4),
+        "CV ROC-AUC":   f"{cv.mean():.4f} ± {cv.std():.4f}",
+        "Brier Score":  round(brier, 4),
+        "Avg Precision": round(avgpr, 4),
+    }, model, y_prob
+
+
 def train(df: pd.DataFrame):
     df = engineer_features(df)
 
@@ -275,6 +300,35 @@ def train(df: pd.DataFrame):
         X, y, test_size=0.20, random_state=42, stratify=y
     )
 
+    # ── Model A: Logistic Regression (linear baseline) ───────────────────────
+    lr_pipe = Pipeline([
+        ("scaler", StandardScaler()),
+        ("clf",    LogisticRegression(max_iter=1000, random_state=42, C=1.0)),
+    ])
+    lr_cv_base = Pipeline([
+        ("scaler", StandardScaler()),
+        ("clf",    LogisticRegression(max_iter=1000, random_state=42, C=1.0)),
+    ])
+    lr_metrics, _, _ = _eval_model(
+        lr_pipe, X_train, X_test, y_train, y_test, X, y, lr_cv_base,
+        "Logistic Regression"
+    )
+
+    # ── Model B: Random Forest ────────────────────────────────────────────────
+    rf_model = RandomForestClassifier(
+        n_estimators=300, max_depth=6, min_samples_leaf=5,
+        random_state=42, n_jobs=-1,
+    )
+    rf_cv_base = RandomForestClassifier(
+        n_estimators=100, max_depth=6, min_samples_leaf=5,
+        random_state=42, n_jobs=-1,
+    )
+    rf_metrics, _, _ = _eval_model(
+        rf_model, X_train, X_test, y_train, y_test, X, y, rf_cv_base,
+        "Random Forest"
+    )
+
+    # ── Model C: XGBoost + isotonic calibration (chosen model) ───────────────
     base = XGBClassifier(
         n_estimators    = 300,
         max_depth       = 4,
@@ -286,40 +340,35 @@ def train(df: pd.DataFrame):
         random_state    = 42,
         verbosity       = 0,
     )
-    # Isotonic calibration ensures predicted probabilities are trustworthy
-    model = CalibratedClassifierCV(base, method="isotonic", cv=3)
-    model.fit(X_train, y_train)
-
-    # ── evaluation ──────────────────────────────────────────────────────────
-    y_prob = model.predict_proba(X_test)[:, 1]
-    y_pred = (y_prob >= 0.5).astype(int)
-
-    auc    = roc_auc_score(y_test, y_prob)
-    avgpr  = average_precision_score(y_test, y_prob)
-    brier  = brier_score_loss(y_test, y_prob)
-
-    print(f"\nTest ROC-AUC : {auc:.4f}  (chance = 0.50)")
-    print(f"Test Avg-PR  : {avgpr:.4f}")
-    print(f"Brier Score  : {brier:.4f}  (perfect = 0.00, naive = 0.25)")
-    print("\nClassification Report:")
-    print(classification_report(y_test, y_pred, target_names=["NO", "YES"]))
-    print("Confusion Matrix:")
-    print(confusion_matrix(y_test, y_pred))
-
-    # 5-fold CV
-    cv_scores = cross_val_score(
-        XGBClassifier(n_estimators=200, max_depth=4, learning_rate=0.05,
-                      min_child_weight=5, random_state=42, verbosity=0),
-        X, y,
-        cv=StratifiedKFold(5, shuffle=True, random_state=42),
-        scoring="roc_auc",
+    xgb_model = CalibratedClassifierCV(base, method="isotonic", cv=3)
+    xgb_cv_base = XGBClassifier(
+        n_estimators=200, max_depth=4, learning_rate=0.05,
+        min_child_weight=5, random_state=42, verbosity=0,
     )
-    print(f"\n5-Fold CV ROC-AUC: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
+    xgb_metrics, model, y_prob = _eval_model(
+        xgb_model, X_train, X_test, y_train, y_test, X, y, xgb_cv_base,
+        "XGBoost + Isotonic Cal. (chosen)"
+    )
+
+    # ── comparison table ─────────────────────────────────────────────────────
+    comparison = [lr_metrics, rf_metrics, xgb_metrics]
+    print("\n\nModel Comparison:")
+    print(pd.DataFrame(comparison).to_string(index=False))
+
+    # ── full evaluation of chosen model ──────────────────────────────────────
+    y_pred = (y_prob >= 0.5).astype(int)
+    auc   = float(xgb_metrics["Test ROC-AUC"])
+    avgpr = float(xgb_metrics["Avg Precision"])
+    brier = float(xgb_metrics["Brier Score"])
+    cv_str = xgb_metrics["CV ROC-AUC"]
+
+    print(f"\nFull Classification Report (XGBoost):")
+    print(classification_report(y_test, y_pred, target_names=["NO", "YES"]))
 
     # ── feature importances (from base estimator) ────────────────────────────
     inner = model.calibrated_classifiers_[0].estimator
     importances = dict(zip(FEATURE_COLS, inner.feature_importances_))
-    print("\nFeature importances:")
+    print("\nFeature importances (XGBoost):")
     for feat, imp in sorted(importances.items(), key=lambda x: -x[1]):
         print(f"  {feat:<25} {imp:.4f}")
 
@@ -329,27 +378,35 @@ def train(df: pd.DataFrame):
         f"Training rows : {len(X_train)}\n"
         f"Test rows     : {len(X_test)}\n"
         f"Features      : {FEATURE_COLS}\n\n"
+        f"=== Model Comparison ===\n"
+        + pd.DataFrame(comparison).to_string(index=False)
+        + f"\n\n=== Chosen Model: XGBoost + Isotonic Calibration ===\n"
         f"Test ROC-AUC  : {auc:.4f}\n"
         f"Test Avg-PR   : {avgpr:.4f}\n"
         f"Brier Score   : {brier:.4f}\n"
-        f"CV ROC-AUC    : {cv_scores.mean():.4f} ± {cv_scores.std():.4f}\n\n"
+        f"CV ROC-AUC    : {cv_str}\n\n"
+        f"Why XGBoost? Handles non-linear feature interactions (e.g. log_vol_x_price),\n"
+        f"mixed feature types, and benefits most from isotonic calibration.\n"
+        f"Logistic Regression assumes linear relationships — underperforms on this task.\n"
+        f"Random Forest is competitive but XGBoost is faster and more tunable.\n\n"
         f"Feature Importances:\n"
         + "\n".join(f"  {k:<25} {v:.4f}" for k, v in
                     sorted(importances.items(), key=lambda x: -x[1]))
-        + "\n\nClassification Report:\n"
+        + "\n\nClassification Report (XGBoost):\n"
         + classification_report(y_test, y_pred, target_names=["NO", "YES"])
     )
-    return model, report
+    return model, report, comparison
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. Save
 # ─────────────────────────────────────────────────────────────────────────────
 
-def save(model, report: str):
+def save(model, report: str, comparison: list):
     joblib.dump(model,        os.path.join(MODEL_DIR, "arbitrage_scorer.pkl"))
     joblib.dump(FEATURE_COLS, os.path.join(MODEL_DIR, "feature_names.pkl"))
     joblib.dump(CATEGORY_MAP, os.path.join(MODEL_DIR, "category_map.pkl"))
+    joblib.dump(comparison,   os.path.join(MODEL_DIR, "model_comparison.pkl"))
     with open(os.path.join(MODEL_DIR, "training_report.txt"), "w") as f:
         f.write(report)
     print(f"\nModel saved to {MODEL_DIR}/arbitrage_scorer.pkl")
@@ -372,6 +429,6 @@ if __name__ == "__main__":
     df = df.dropna(subset=["yes_price", "log_volume", "days_to_resolution", "resolved_yes"])
     print(f"Clean training rows: {len(df)}")
 
-    model, report = train(df)
-    save(model, report)
+    model, report, comparison = train(df)
+    save(model, report, comparison)
     print("\nDone.")

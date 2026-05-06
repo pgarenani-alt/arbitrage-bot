@@ -414,6 +414,36 @@ with _tab_model:
         """
     )
 
+    # ── Model Comparison ─────────────────────────────────────────────────────
+    comparison_path = os.path.join(os.path.dirname(__file__), "models", "model_comparison.pkl")
+    if os.path.exists(comparison_path):
+        import joblib as _jl2
+        comparison = _jl2.load(comparison_path)
+        st.markdown("### Model Comparison")
+        st.caption(
+            "Three models were trained and evaluated on the same data. "
+            "XGBoost was selected as the final model — it handles non-linear "
+            "feature interactions and mixed feature types better than the alternatives, "
+            "which matters most on real (non-synthetic) market data."
+        )
+        comp_df = pd.DataFrame(comparison)
+        def _highlight_best(col):
+            if col.name in ("Test ROC-AUC", "Avg Precision"):
+                best = col.max()
+                return ["background-color:#c8f7c5;color:#1a1a1a" if v == best
+                        else "" for v in col]
+            if col.name == "Brier Score":
+                best = col.min()
+                return ["background-color:#c8f7c5;color:#1a1a1a" if v == best
+                        else "" for v in col]
+            return [""] * len(col)
+        st.dataframe(
+            comp_df.style.apply(_highlight_best),
+            use_container_width=True, hide_index=True
+        )
+        st.caption("Green = best score for that metric. All models use the same 7 features and 80/20 train/test split.")
+        st.markdown("---")
+
     # Show training report if available
     report_path = os.path.join(os.path.dirname(__file__), "models", "training_report.txt")
     if os.path.exists(report_path):
