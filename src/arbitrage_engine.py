@@ -279,27 +279,54 @@ def find_opportunities(
     used_poly_ids = set()
     matched_kalshi_ids: set[str] = set()
 
-    ai_stats = {"claude": 0, "embedding": 0}
+    ai_stats   = {"claude": 0, "embedding": 0}
+    direct_count = 0
 
-    if use_ai_matching:
+    # ── Tier 0: direct match for synthetic demo markets ──────────────────────
+    # Each synthetic Kalshi market stores _poly_source_id pointing to the exact
+    # Polymarket market it was derived from.  Match them directly — no AI needed,
+    # no risk of pairing with a wrong Polymarket market.
+    poly_by_id = {pm["id"]: pm for pm in poly_markets}
+    for km in kalshi_markets:
+        src_id = km.get("_poly_source_id", "")
+        if not src_id:
+            continue
+        pm = poly_by_id.get(src_id)
+        if pm is None:
+            continue
+        opp = _compute_opportunity(
+            km, pm,
+            {"confidence": "high", "reasoning": "synthetic market — direct source match",
+             "method": "direct"},
+        )
+        if opp and min_profit_pct <= opp["expected_profit_pct"]:
+            opportunities.append(opp)
+            used_poly_ids.add(pm["id"])
+        matched_kalshi_ids.add(km["id"])
+        direct_count += 1
+
+    # ── Tiers 1 & 2: AI matching for real (non-synthetic) Kalshi markets ─────
+    real_kalshi = [km for km in kalshi_markets if km["id"] not in matched_kalshi_ids]
+
+    if use_ai_matching and real_kalshi:
         try:
             from src.market_matcher import bulk_match
-            matched_triples, ai_stats = bulk_match(kalshi_markets, poly_markets)
+            matched_triples, ai_stats = bulk_match(real_kalshi, poly_markets)
             for km, pm, meta in matched_triples:
+                if pm["id"] in used_poly_ids:
+                    continue
                 opp = _compute_opportunity(km, pm, meta)
                 if opp and opp["expected_profit_pct"] >= min_profit_pct:
                     opportunities.append(opp)
                     used_poly_ids.add(pm["id"])
                 matched_kalshi_ids.add(km["id"])
         except Exception:
-            pass   # fall through to keyword matcher
+            pass
 
-    # Tier 3 — Keyword fallback for any Kalshi markets not matched by AI tiers
+    # ── Tier 3: Keyword fallback for remaining unmatched real markets ─────────
     keyword_count = 0
     for km in kalshi_markets:
         if km["id"] in matched_kalshi_ids:
-            continue
-        if any(o["kalshi_id"] == km["id"] for o in opportunities):
             continue
         unmatched_poly = [p for p in poly_markets if p["id"] not in used_poly_ids]
         pm = _keyword_match(km, unmatched_poly)
@@ -312,6 +339,7 @@ def find_opportunities(
                 opportunities.append(opp)
                 used_poly_ids.add(pm["id"])
             keyword_count += 1
+        matched_kalshi_ids.add(km["id"])
 
     # Sort by ML confidence × expected profit
     opportunities.sort(
@@ -320,9 +348,10 @@ def find_opportunities(
     )
 
     n_total   = len(kalshi_markets)
-    n_matched = ai_stats["claude"] + ai_stats["embedding"] + keyword_count
+    n_matched = direct_count + ai_stats["claude"] + ai_stats["embedding"] + keyword_count
     stats = {
         "total_kalshi": n_total,
+        "direct":        direct_count,
         "claude":        ai_stats["claude"],
         "embedding":     ai_stats["embedding"],
         "keyword":       keyword_count,

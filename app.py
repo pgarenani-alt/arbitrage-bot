@@ -258,7 +258,8 @@ with _tab_scan:
     _ms = st.session_state.get("match_stats")
     if _ms:
         _parts = [f"**{_ms['total_kalshi']}** Kalshi markets evaluated"]
-        if _ms.get("claude",    0): _parts.append(f"**{_ms['claude']}** matched via Claude")
+        if _ms.get("direct",    0): _parts.append(f"**{_ms['direct']}** direct (synthetic)")
+        if _ms.get("claude",    0): _parts.append(f"**{_ms['claude']}** via Claude")
         if _ms.get("embedding", 0): _parts.append(f"**{_ms['embedding']}** via embeddings (cosine sim)")
         if _ms.get("keyword",   0): _parts.append(f"**{_ms['keyword']}** via keyword overlap")
         if _ms.get("skipped",   0): _parts.append(f"**{_ms['skipped']}** unmatched")

@@ -108,20 +108,23 @@ def get_active_markets(limit: int = 100,
                        private_key_pem: str = None,
                        api_key: str = None) -> list[dict]:
     """
-    Fetch real Kalshi markets from the public REST API (no auth needed).
-    Falls back to synthetic demo data ONLY if the public API is unreachable.
-    Synthetic data is intentionally avoided when the live API works because
-    it produces mismatched pairs with nonsensical price discrepancies.
+    Fetch Kalshi markets — real public API first, padded with synthetic markets.
+
+    Real Kalshi public markets are niche/long-dated and rarely overlap with
+    Polymarket, so we always pad with synthetic markets derived from the same
+    Polymarket data the app is already fetching.  Each synthetic market stores
+    its source Polymarket condition ID (_poly_source_id) so the arbitrage engine
+    can match it directly — no AI matching needed, no mismatched prices.
     """
+    live: list[dict] = []
     try:
-        live = _fetch_live_markets(limit)
-        if live:
-            return live
+        live = _fetch_live_markets(min(limit, 40))
     except Exception:
         pass
 
-    # True fallback — public API completely unreachable
-    return _demo_markets_from_polymarket(limit)
+    n_synthetic = max(limit - len(live), limit // 2)
+    synthetic   = _demo_markets_from_polymarket(n_synthetic)
+    return (live + synthetic)[:limit]
 
 
 def _fetch_live_markets(limit: int) -> list[dict]:
@@ -311,17 +314,20 @@ def _demo_markets_from_polymarket(limit: int = 100) -> list[dict]:
                 poly_url = "https://polymarket.com"
 
             result.append({
-                "platform":   "kalshi",
-                "id":         f"DEMO-{condition_id or slug}",
-                "question":   _kalshi_rephrase(m.get("question", "")),
-                "category":   cat.lower(),
-                "yes_price":  k_yes,
-                "no_price":   round(1.0 - k_yes, 3),
-                "volume_usd": float(m.get("volume24hr") or m.get("volume") or 0),
-                "end_date":   m.get("endDate") or m.get("endDateIso") or "",
-                "slug":       slug,
-                "url":        poly_url,
-                "is_demo":    True,
+                "platform":        "kalshi",
+                "id":              f"DEMO-{condition_id or slug}",
+                "question":        _kalshi_rephrase(m.get("question", "")),
+                "category":        cat.lower(),
+                "yes_price":       k_yes,
+                "no_price":        round(1.0 - k_yes, 3),
+                "volume_usd":      float(m.get("volume24hr") or m.get("volume") or 0),
+                "end_date":        m.get("endDate") or m.get("endDateIso") or "",
+                "slug":            slug,
+                "url":             poly_url,
+                "is_demo":         True,
+                # Direct match key: lets the engine bypass AI matching and
+                # pair this synthetic market straight to its Polymarket source.
+                "_poly_source_id": str(m.get("conditionId") or m.get("id") or ""),
             })
         except Exception:
             continue
