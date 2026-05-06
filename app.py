@@ -1,6 +1,6 @@
 """
 Prediction Markets Arbitrage Bot
-Applied Machine Learning — Final Project
+Advanced Machine Learning — Final Project
 """
 import os
 import sys
@@ -515,13 +515,109 @@ with _tab_model:
         use_container_width=True,
     )
 
+    # ── SHAP Feature Importance ───────────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### 🔍 SHAP Feature Importance")
+    st.caption(
+        "SHAP (SHapley Additive exPlanations) shows exactly how much each feature "
+        "pushes the model's prediction up or down for the current slider values. "
+        "Red = pushes toward a genuine arb opportunity. Blue = pushes against it."
+    )
+
+    if os.path.exists(model_path):
+        try:
+            import shap
+
+            # CalibratedClassifierCV wraps multiple base estimators — grab the first XGBoost one
+            base_est = model.calibrated_classifiers_[0].estimator
+            explainer = shap.TreeExplainer(base_est)
+
+            _feat_names = [
+                "yes_price", "log_volume", "days_to_resolution",
+                "category_enc", "price_confidence", "extreme_price", "log_vol_x_price",
+            ]
+
+            # ── Waterfall: SHAP for current slider inputs ─────────────────────
+            shap_vals = explainer.shap_values(x)
+            # For binary classifiers TreeExplainer returns list[2]; take class-1 values
+            sv = shap_vals[1][0] if isinstance(shap_vals, list) else shap_vals[0]
+
+            shap_df = pd.DataFrame({
+                "Feature": _feat_names,
+                "SHAP":    sv,
+                "Value":   x[0],
+            }).sort_values("SHAP", key=abs, ascending=True)
+
+            fig_waterfall = go.Figure(go.Bar(
+                x=shap_df["SHAP"],
+                y=[f"{r['Feature']} = {r['Value']:.3f}" for _, r in shap_df.iterrows()],
+                orientation="h",
+                marker_color=["#ef5350" if v > 0 else "#42a5f5" for v in shap_df["SHAP"]],
+                text=[f"{v:+.4f}" for v in shap_df["SHAP"]],
+                textposition="outside",
+            ))
+            fig_waterfall.update_layout(
+                title="SHAP Values for Current Scorer Inputs (updates live with sliders)",
+                xaxis_title="SHAP value — impact on model output",
+                height=370,
+                margin=dict(l=20, r=60, t=50, b=20),
+            )
+            st.plotly_chart(fig_waterfall, use_container_width=True)
+
+            # ── Global importance: mean |SHAP| over a synthetic sample grid ───
+            st.markdown("#### Global Feature Importance (mean |SHAP| over sample space)")
+            st.caption("Averaged over 200 representative market scenarios — shows which features matter most overall.")
+
+            rng = np.random.default_rng(42)
+            n_samp = 200
+            sample_yes   = rng.uniform(0.05, 0.95, n_samp)
+            sample_vol   = np.exp(rng.uniform(6, 13, n_samp))        # $400 – $440k
+            sample_days  = rng.integers(1, 180, n_samp).astype(float)
+            sample_cat   = rng.integers(0, 8,   n_samp).astype(float)
+            sample_lv    = np.log1p(sample_vol)
+            sample_pc    = sample_lv * (1 - 2 * np.abs(sample_yes - 0.5))
+            sample_ext   = (sample_yes < 0.10) | (sample_yes > 0.90)
+            sample_lvxp  = sample_lv * sample_yes
+            X_sample = np.column_stack([
+                sample_yes, sample_lv, sample_days, sample_cat,
+                sample_pc, sample_ext.astype(float), sample_lvxp,
+            ])
+
+            sv_global = explainer.shap_values(X_sample)
+            sv_global_cls1 = sv_global[1] if isinstance(sv_global, list) else sv_global
+            mean_abs = np.abs(sv_global_cls1).mean(axis=0)
+
+            global_df = pd.DataFrame({
+                "Feature":         _feat_names,
+                "Mean |SHAP|":     mean_abs,
+            }).sort_values("Mean |SHAP|", ascending=True)
+
+            fig_global = go.Figure(go.Bar(
+                x=global_df["Mean |SHAP|"],
+                y=global_df["Feature"],
+                orientation="h",
+                marker_color="#1976D2",
+                text=[f"{v:.4f}" for v in global_df["Mean |SHAP|"]],
+                textposition="outside",
+            ))
+            fig_global.update_layout(
+                title="Global Feature Importance — Mean |SHAP Value| (higher = more influential)",
+                xaxis_title="Mean absolute SHAP value",
+                height=350,
+                margin=dict(l=20, r=60, t=50, b=20),
+            )
+            st.plotly_chart(fig_global, use_container_width=True)
+
+        except Exception as e:
+            st.info(f"SHAP visualisation unavailable: {e}")
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Footer
 # ─────────────────────────────────────────────────────────────────────────────
 
 st.divider()
 st.caption(
-    "Built for Applied Machine Learning — Final Project · "
+    "Built for Advanced Machine Learning — Final Project · "
     "Kalshi + Polymarket Arbitrage Bot · "
-    "ML: XGBoost | AI: Claude (Anthropic) | UI: Streamlit"
+    "ML: XGBoost + SHAP | AI: Claude (Anthropic) | UI: Streamlit"
 )
