@@ -286,12 +286,12 @@ def find_opportunities(
     # Each synthetic Kalshi market stores _poly_source_id pointing to the exact
     # Polymarket market it was derived from.  Match them directly — no AI needed,
     # no risk of pairing with a wrong Polymarket market.
-    poly_by_id = {pm["id"]: pm for pm in poly_markets}
+    poly_by_question = {pm["question"]: pm for pm in poly_markets}
     for km in kalshi_markets:
-        src_id = km.get("_poly_source_id", "")
-        if not src_id:
+        src_q = km.get("_poly_source_question", "")
+        if not src_q:
             continue
-        pm = poly_by_id.get(src_id)
+        pm = poly_by_question.get(src_q)
         if pm is None:
             continue
         opp = _compute_opportunity(

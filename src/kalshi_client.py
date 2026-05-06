@@ -314,20 +314,22 @@ def _demo_markets_from_polymarket(limit: int = 100) -> list[dict]:
                 poly_url = "https://polymarket.com"
 
             result.append({
-                "platform":        "kalshi",
-                "id":              f"DEMO-{condition_id or slug}",
-                "question":        _kalshi_rephrase(m.get("question", "")),
-                "category":        cat.lower(),
-                "yes_price":       k_yes,
-                "no_price":        round(1.0 - k_yes, 3),
-                "volume_usd":      float(m.get("volume24hr") or m.get("volume") or 0),
-                "end_date":        m.get("endDate") or m.get("endDateIso") or "",
-                "slug":            slug,
-                "url":             poly_url,
-                "is_demo":         True,
-                # Direct match key: lets the engine bypass AI matching and
-                # pair this synthetic market straight to its Polymarket source.
-                "_poly_source_id": str(m.get("conditionId") or m.get("id") or ""),
+                "platform":             "kalshi",
+                "id":                   f"DEMO-{condition_id or slug}",
+                "question":             _kalshi_rephrase(m.get("question", "")),
+                "category":             cat.lower(),
+                "yes_price":            k_yes,
+                "no_price":             round(1.0 - k_yes, 3),
+                "volume_usd":           float(m.get("volume24hr") or m.get("volume") or 0),
+                "end_date":             m.get("endDate") or m.get("endDateIso") or "",
+                "slug":                 slug,
+                "url":                  poly_url,
+                "is_demo":              True,
+                # Original unmodified Polymarket question — used by the engine
+                # to find the exact Polymarket partner by question text.
+                # More reliable than conditionId because both sides always fetch
+                # top-N by volume and the same questions appear in both lists.
+                "_poly_source_question": m.get("question", ""),
             })
         except Exception:
             continue
