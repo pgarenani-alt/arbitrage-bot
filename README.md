@@ -1,9 +1,9 @@
-# Prediction Market Arbitrage Bot
+# Prediction Markets Arbitrage Bot
 **Advanced Machine Learning — Final Project**
 
-Detects price discrepancies between [Kalshi](https://kalshi.com) and [Polymarket](https://polymarket.com), scores them with a trained ML model, and generates AI-powered trade recommendations.
+Detects price discrepancies between [Kalshi](https://kalshi.com) and [Polymarket](https://polymarket.com), scores them with an ML model, and generates AI-powered trade recommendations.
 
-**Live demo:** https://arbitrage-bot-pgarenani.streamlit.app
+**Live demo:** https://arbitrage-bot-lwnpfz7g5fv23zungbeypy.streamlit.app
 
 ---
 
@@ -79,9 +79,9 @@ Three-tier matching pipeline — each Kalshi market is matched to its Polymarket
 
 1. **Tier 1 — Claude Haiku** (`claude-haiku-4-5-20251001`): LLM semantic matching. Given a Kalshi question and up to 10 Polymarket candidates, Claude picks the best match and rates confidence (high/medium/low). Handles cross-platform rephrasing (e.g. "Will X happen?" vs "X by end of year?").
 
-2. **Tier 2 — Sentence Embeddings + Cosine Similarity** (`all-MiniLM-L6-v2`): Each question is encoded into a 384-dimensional dense vector using a sentence-transformer model. Cosine similarity between the Kalshi embedding and each Polymarket candidate embedding is computed as a dot product of L2-normalised vectors. A similarity score ≥ 0.65 qualifies as a match (≥ 0.80 = high confidence). This tier explicitly applies the sentence embedding and cosine similarity concepts from the course.
+2. **Tier 2 — Sentence Embeddings + Cosine Similarity** (`all-MiniLM-L6-v2`): Each question is encoded into a 384-dimensional dense vector using a sentence-transformer model. Cosine similarity between the Kalshi embedding and each Polymarket candidate is computed as a dot product of L2-normalised vectors — so cosine similarity reduces to a simple dot product. A score ≥ 0.65 qualifies as a match (≥ 0.80 = high confidence). This tier directly applies the sentence embedding and cosine similarity concepts from the course.
 
-3. **Tier 3 — Jaccard Keyword Overlap**: Classical NLP fallback. Stopwords are removed, then token overlap (intersection / union) ≥ 0.25 is used to find a match. Runs in the engine for any markets not handled by Tiers 1–2.
+3. **Tier 3 — Jaccard Keyword Overlap**: Classical NLP fallback. Stopwords are removed, then token overlap (intersection / union) ≥ 0.25 is used to find a match for any markets not handled by Tiers 1–2.
 
 Claude Sonnet (`claude-sonnet-4-6`) also generates a plain-English trade recommendation for each opportunity, covering trade instructions, expected profit, and key risks.
 
@@ -89,7 +89,7 @@ Claude Sonnet (`claude-sonnet-4-6`) also generates a plain-English trade recomme
 - Ranked table of live arbitrage opportunities with expected profit %, ML confidence, days to resolution, and match quality
 - Detailed per-opportunity view: exact trade instructions (buy YES on Kalshi, buy NO on Polymarket, etc.), combined cost, gross/net profit after fees
 - Interactive ML scorer: enter any hypothetical price pair to get a model confidence score without re-running the full scan
-- Match pipeline stats displayed on every scan: how many markets were matched by Claude vs embeddings vs keyword
+- Match pipeline stats displayed on every scan: how many markets were matched by Claude vs embeddings (cosine similarity) vs keyword fallback
 
 ---
 
