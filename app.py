@@ -213,18 +213,18 @@ with _tab_scan:
             except Exception as e:
                 st.error(f"Polymarket fetch error: {e}")
 
-            # Determine whether we got live Kalshi data or fell back to demo
-            is_demo = not km_list or any(m.get("is_demo") for m in km_list)
-            if is_demo:
-                kalshi_source = "demo (public API unreachable)"
-                st.warning(
-                    "Kalshi public API unreachable — showing synthetic demo markets "
-                    "derived from live Polymarket prices.", icon="⚠️"
-                )
-            else:
+            # Count real vs synthetic Kalshi markets
+            n_live  = sum(1 for m in km_list if not m.get("is_demo"))
+            n_synth = sum(1 for m in km_list if m.get("is_demo"))
+            if n_live and n_synth:
+                kalshi_source = f"{n_live} live + {n_synth} synthetic"
+            elif n_live:
                 kalshi_source = "live (public API)"
+            else:
+                kalshi_source = "synthetic demo"
             status_placeholder.success(
-                f"Fetched {len(km_list)} Kalshi ({kalshi_source}) + {len(pm_list)} Polymarket markets"
+                f"Fetched {len(km_list)} Kalshi ({kalshi_source}) "
+                f"+ {len(pm_list)} Polymarket markets"
             )
 
         if km_list or pm_list:
