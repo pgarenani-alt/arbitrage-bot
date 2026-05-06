@@ -3,6 +3,8 @@
 
 Detects price discrepancies between [Kalshi](https://kalshi.com) and [Polymarket](https://polymarket.com), scores them with an ML model, and generates AI-powered trade recommendations.
 
+**Live demo:** https://arbitrage-bot-pgarenani.streamlit.app *(or your Streamlit Cloud URL)*
+
 ---
 
 ## Quick Start (Local)
@@ -14,9 +16,9 @@ cd arbitrage-bot
 # 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. Copy env template and fill in your keys
+# 3. Copy env template and add your Anthropic key
 cp .env.example .env
-# Edit .env: add ANTHROPIC_API_KEY (required for AI features)
+# Edit .env: set ANTHROPIC_API_KEY (required for AI matching + recommendations)
 
 # 4. Train the ML model  ← run this once
 python scripts/train_model.py
@@ -33,12 +35,9 @@ The app opens at `http://localhost:8501`.
 
 | Key | Required? | Where to get it |
 |-----|-----------|-----------------|
-| `ANTHROPIC_API_KEY` | **Yes** (for AI matching + analysis) | [console.anthropic.com](https://console.anthropic.com) |
-| `KALSHI_API_KEY` | Optional | [kalshi.com](https://kalshi.com) → API Settings |
+| `ANTHROPIC_API_KEY` | **Yes** (for Claude AI matching + trade analysis) | [console.anthropic.com](https://console.anthropic.com) |
 
-Polymarket requires **no API key** — market data is public.
-
-Without the Kalshi API key the app uses a realistic demo dataset of 8 markets.
+**No Kalshi or Polymarket API key is needed.** Both platforms expose public market data endpoints with no authentication required for read-only access.
 
 ---
 
@@ -48,15 +47,16 @@ Without the Kalshi API key the app uses a realistic demo dataset of 8 markets.
 arbitrage-bot/
 ├── app.py                        # Streamlit UI (main entry point)
 ├── src/
-│   ├── kalshi_client.py          # Kalshi REST API wrapper + demo data
+│   ├── kalshi_client.py          # Kalshi public REST API + synthetic demo markets
 │   ├── polymarket_client.py      # Polymarket Gamma API client
-│   ├── market_matcher.py         # Claude-powered cross-platform matching (Component B)
+│   ├── market_matcher.py         # Three-tier AI matching pipeline (Component B)
 │   └── arbitrage_engine.py       # Arbitrage detection + ML scoring (Component C)
 ├── scripts/
 │   └── train_model.py            # ML training script (Component A)
-├── models/                       # Saved model artifacts (created by train script)
+├── models/                       # Saved model artifacts (committed — no retraining needed)
 │   ├── arbitrage_scorer.pkl
 │   ├── feature_names.pkl
+│   ├── category_map.pkl
 │   └── training_report.txt
 ├── requirements.txt
 └── .env.example
@@ -67,21 +67,26 @@ arbitrage-bot/
 ## How It Works
 
 ### A. ML Model (Component A — 30 pts)
-- **Data**: Historical resolved markets from Polymarket's public Gamma API
-- **Features**: `yes_price`, `spread`, `combined_cost`, `price_level`, `log_volume`, `days_to_resolution`, `category_enc`, `is_near_boundary`, `days_log`
-- **Target**: `profitable_arb` — 1 if the arbitrage would have been profitable after fees (combined cost < 0.96)
+- **Data**: ~1,000 resolved markets fetched from Polymarket's public Gamma API
+- **Features**: `yes_price`, `log_volume`, `days_to_resolution`, `category_enc`, `price_confidence`, `extreme_price`, `log_vol_x_price`
+- **Target**: `profitable_arb` — 1 if the market's mid-price deviates enough from 0.5 to signal a misprice
 - **Model**: XGBoost classifier with isotonic probability calibration
-- **Evaluation**: ROC-AUC, precision/recall, 5-fold cross-validation (reported in `models/training_report.txt`)
+- **Evaluation**: ROC-AUC 0.765, 5-fold cross-validation (see `models/training_report.txt`)
 
 ### B. AI Component (Component B — 25 pts)
-Claude is used for two tasks:
-1. **Market matching** (`claude-haiku-4-5-20251001`): Semantically pairs Kalshi and Polymarket markets that describe the same event (different wording, date formats, etc.)
-2. **Trade recommendation** (`claude-sonnet-4-6`): Generates a plain-English analysis of each opportunity including trade instructions, risk factors, and event context
+
+Three-tier matching pipeline — each Kalshi market is matched to its Polymarket counterpart using:
+
+1. **Tier 1 — Claude Haiku** (`claude-haiku-4-5-20251001`): LLM semantic matching. Given a Kalshi question and up to 10 Polymarket candidates, Claude picks the best match and rates confidence (high/medium/low).
+2. **Tier 2 — Sentence-transformer cosine similarity** (`all-MiniLM-L6-v2`): Encodes both questions into dense vectors; cosine similarity ≥ 0.65 qualifies as a match. Uses L2-normalised dot product for efficiency.
+3. **Tier 3 — Jaccard keyword overlap**: Classical NLP fallback for any markets not matched by the AI tiers.
+
+Claude Sonnet (`claude-sonnet-4-6`) also generates a plain-English trade recommendation for each opportunity, covering trade instructions, expected profit, and key risks.
 
 ### C. Decision Output (Component C — 25 pts)
-- Ranked table of live arbitrage opportunities with expected profit %, ML confidence, and match quality
-- Detailed view per opportunity: exact trade instructions (buy X on Kalshi, buy Y on Polymarket), combined cost, gross/net profit
-- Interactive ML scorer so the professor can input any hypothetical numbers
+- Ranked table of live arbitrage opportunities with expected profit %, ML confidence, days to resolution, and match quality
+- Detailed per-opportunity view: exact trade instructions (buy YES on Kalshi, buy NO on Polymarket, etc.), combined cost, gross/net profit after fees
+- Interactive ML scorer: enter any hypothetical price pair to get a model confidence score without re-running the full scan
 
 ---
 
@@ -90,15 +95,15 @@ Claude is used for two tasks:
 A risk-free arbitrage exists when you can buy **both** YES on one platform and NO on the other for a combined cost < $1.00:
 
 ```
-If Kalshi YES = 0.45 and Polymarket YES = 0.55:
-  → Buy YES on Kalshi @ 0.45
+Example: Kalshi YES = 0.45 and Polymarket YES = 0.55
+  → Buy YES on Kalshi     @ 0.45
   → Buy NO  on Polymarket @ 0.45   (= 1 - 0.55)
   Combined cost = 0.90
   Payout always = $1.00 (one side always wins)
   Gross profit  = $0.10 = 10%
 ```
 
-After fees (~4% round-trip), net profit ≈ 6%.
+After fees (~4–5% round-trip), net profit ≈ 5–6%. The engine caps gross profit at 20% — anything higher almost certainly means two markets were incorrectly matched.
 
 ---
 
@@ -107,13 +112,13 @@ After fees (~4% round-trip), net profit ≈ 6%.
 1. Push this repo to GitHub
 2. Go to [share.streamlit.io](https://share.streamlit.io)
 3. Connect your repo, set `app.py` as the main file
-4. Add `ANTHROPIC_API_KEY` (and optionally `KALSHI_API_KEY`) as Secrets
+4. Add `ANTHROPIC_API_KEY` as a Secret
 5. Deploy — the model is pre-trained and committed to `models/`
 
 ---
 
 ## Data Sources
 
-- **Polymarket**: `https://gamma-api.polymarket.com/markets` — public, no auth
-- **Kalshi**: `https://api.elections.kalshi.com/trade-api/v2/markets` — requires API key (free)
-- **Training data**: Resolved Polymarket markets (500–1500 rows depending on API availability)
+- **Polymarket**: `https://gamma-api.polymarket.com/markets` — public, no auth required
+- **Kalshi**: `https://external-api.kalshi.com/trade-api/v2` — public endpoint, no auth required for market data
+- **Training data**: ~1,000 resolved Polymarket markets fetched via the Gamma API
