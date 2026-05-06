@@ -1,17 +1,12 @@
 """
 Kalshi API client.
-Uses Kalshi Trade API v2 — https://api.elections.kalshi.com/trade-api/v2
+Uses Kalshi Trade API v2 — https://external-api.kalshi.com/trade-api/v2
 
-Authentication: RSA-PSS request signing (not a simple Bearer token).
-Each request is signed with a private RSA key; the signature covers:
-    timestamp_ms + HTTP_METHOD + /path
+Public market data (GET /markets) requires NO authentication.
+Trading endpoints require RSA-PSS request signing, but we don't trade here.
 
-Required credentials (both needed for live mode):
-    KALSHI_KEY_ID      — the access-key ID from the Kalshi dashboard
-    KALSHI_PRIVATE_KEY — PEM-encoded RSA private key (can be multi-line)
-
-Falls back to synthetic demo data derived from live Polymarket prices when
-credentials are absent or the live API is unreachable.
+Falls back to synthetic demo data (derived from live Polymarket prices) only
+if the public Kalshi endpoint is unreachable.
 """
 import os
 import re
@@ -21,7 +16,13 @@ import random
 import requests
 from typing import Optional
 
-KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+# Primary: public REST API, no auth required for market data
+KALSHI_PUBLIC_BASE = "https://external-api.kalshi.com/trade-api/v2"
+
+# Kept for completeness; used only when RSA credentials are provided
+KALSHI_AUTH_BASE   = "https://api.elections.kalshi.com/trade-api/v2"
+
 HEADERS_BASE = {
     "Content-Type": "application/json",
     "User-Agent":   "ArbitrageBot/1.0",
@@ -31,19 +32,41 @@ KALSHI_FEE_RATE = 0.07   # 7 % of winnings on winning side
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# RSA-PSS signing
+# Public (no-auth) HTTP helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_public(path: str, params: dict = None, retries: int = 3) -> dict:
+    """GET against the public Kalshi endpoint — no authentication headers."""
+    url      = f"{KALSHI_PUBLIC_BASE}{path}"
+    last_err = None
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, params=params, headers=HEADERS_BASE, timeout=10)
+            if not r.ok:
+                last_err = f"HTTP {r.status_code}: {r.text[:300]}"
+                time.sleep(1.5 ** attempt)
+                continue
+            return r.json()
+        except requests.RequestException as e:
+            last_err = str(e)
+            if attempt < retries - 1:
+                time.sleep(1.5 ** attempt)
+    raise RuntimeError(f"Kalshi public request failed — {last_err}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RSA-PSS signing (kept for optional authenticated endpoints)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _load_private_key(pem_text: str):
     """Parse a PEM private key from a string (supports \\n literals)."""
     from cryptography.hazmat.primitives import serialization
-    # Accept both real newlines and escaped \n (common when stored in env vars)
     pem_text = pem_text.replace("\\n", "\n").strip()
     return serialization.load_pem_private_key(pem_text.encode(), password=None)
 
 
 def _sign_headers(key_id: str, private_key, method: str, path: str) -> dict:
-    """Return the three Kalshi auth headers for one request."""
+    """Return the three Kalshi auth headers for one signed request."""
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import padding
 
@@ -66,11 +89,7 @@ def _sign_headers(key_id: str, private_key, method: str, path: str) -> dict:
 
 
 def _get_credentials(key_id: str = None, private_key_pem: str = None):
-    """
-    Resolve (key_id, private_key) from arguments or environment variables.
-    Returns (None, None) if credentials are incomplete.
-    """
-    kid = key_id         or os.getenv("KALSHI_KEY_ID",      "")
+    kid = key_id          or os.getenv("KALSHI_KEY_ID",      "")
     pem = private_key_pem or os.getenv("KALSHI_PRIVATE_KEY", "")
     if not kid or not pem:
         return None, None
@@ -81,61 +100,99 @@ def _get_credentials(key_id: str = None, private_key_pem: str = None):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# HTTP helper
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _get(path: str, params: dict = None,
-         key_id: str = None, private_key=None, retries: int = 3) -> dict:
-    url      = f"{KALSHI_BASE}{path}"
-    last_err = None
-    for attempt in range(retries):
-        try:
-            headers = _sign_headers(key_id, private_key, "GET", path)
-            r = requests.get(url, params=params, headers=headers, timeout=10)
-            if not r.ok:
-                last_err = f"HTTP {r.status_code}: {r.text[:300]}"
-                if r.status_code in (401, 403):
-                    raise RuntimeError(f"Kalshi auth failed — {last_err}")
-                time.sleep(1.5 ** attempt)
-                continue
-            return r.json()
-        except RuntimeError:
-            raise
-        except requests.RequestException as e:
-            last_err = str(e)
-            if attempt == retries - 1:
-                raise RuntimeError(f"Kalshi request failed — {last_err}")
-            time.sleep(1.5 ** attempt)
-    raise RuntimeError(f"Kalshi request failed — {last_err}")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_active_markets(limit: int = 100,
                        key_id: str = None,
                        private_key_pem: str = None,
-                       # legacy param kept for backward compat — ignored
                        api_key: str = None) -> list[dict]:
     """
-    Fetch open Kalshi markets.
-    Falls back to synthetic demo data when credentials are absent or
-    the live API is unreachable (DNS error, auth failure, timeout, etc.).
+    Fetch open Kalshi markets via the public REST API (no auth required).
+
+    Strategy:
+      1. Fetch open events from /events (one call).
+      2. For each event, fetch its markets from /markets?event_ticker=X.
+         Real binary markets with live bid/ask prices are only accessible
+         this way — the default /markets listing returns MVE parlay legs
+         which never have quoted prices.
+      3. Fall back to synthetic demo data only if the live API is unreachable.
     """
-    kid, pk = _get_credentials(key_id, private_key_pem)
-    if kid and pk:
-        try:
-            data    = _get("/markets", params={"status": "open", "limit": limit},
-                           key_id=kid, private_key=pk)
-            raw     = data.get("markets") or []
-            markets = [m for m in (_normalise(r) for r in raw) if m]
-            if markets:
-                return markets
-        except Exception:
-            pass   # fall through to demo
+    try:
+        markets = _fetch_live_markets(limit)
+        if markets:
+            return markets
+    except Exception:
+        pass   # fall through to demo
 
     return _demo_markets_from_polymarket(limit)
+
+
+def _fetch_live_markets(limit: int) -> list[dict]:
+    """
+    Fetch live binary markets by iterating through open Kalshi events.
+    Uses concurrent requests (20 workers) to keep latency under ~5 seconds.
+    Results are cached by Streamlit for 120 s, so first-load wait is acceptable.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    # Step 1: pull events from the most active categories first, then mix in others
+    # (Elections/Politics/Economics/Crypto tend to have the highest volume)
+    priority_cats = ["Economics", "Politics", "Elections", "Crypto", "Sports"]
+    events: list[dict] = []
+    seen: set[str] = set()
+    per_cat = max(limit // len(priority_cats), 10)
+
+    for cat in priority_cats:
+        try:
+            d = _get_public("/events", params={"status": "open",
+                                               "limit": per_cat,
+                                               "category": cat})
+            for ev in (d.get("events") or []):
+                if ev["event_ticker"] not in seen:
+                    seen.add(ev["event_ticker"])
+                    events.append(ev)
+        except Exception:
+            pass
+
+    # Fill remaining slots with the generic open-events list
+    if len(events) < limit:
+        try:
+            d = _get_public("/events", params={"status": "open", "limit": limit})
+            for ev in (d.get("events") or []):
+                if ev["event_ticker"] not in seen:
+                    seen.add(ev["event_ticker"])
+                    events.append(ev)
+        except Exception:
+            pass
+
+    if not events:
+        return []
+
+    # Step 2: fetch markets for each event in parallel (5-second per-request timeout)
+    def fetch_event_markets(event: dict) -> list[dict]:
+        try:
+            url  = f"{KALSHI_PUBLIC_BASE}/markets"
+            r    = requests.get(url,
+                                params={"event_ticker": event["event_ticker"]},
+                                headers=HEADERS_BASE, timeout=5)
+            raw  = r.json().get("markets", []) if r.ok else []
+            for m in raw:
+                m.setdefault("_category", event.get("category", "other"))
+            return raw
+        except Exception:
+            return []
+
+    all_raw: list[dict] = []
+    with ThreadPoolExecutor(max_workers=20) as pool:
+        futures = [pool.submit(fetch_event_markets, ev) for ev in events]
+        for future in as_completed(futures):
+            all_raw.extend(future.result())
+
+    # Step 3: normalise, filter to markets with real prices, sort by volume
+    markets = [m for m in (_normalise(r) for r in all_raw) if m]
+    markets.sort(key=lambda m: m["volume_usd"], reverse=True)
+    return markets[:limit]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -143,34 +200,58 @@ def get_active_markets(limit: int = 100,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _normalise(m: dict) -> Optional[dict]:
+    """
+    Map a raw Kalshi API market dict to the app's standard market schema.
+
+    The public API returns prices in the *_dollars fields as dollar strings
+    ("0.6500"). Mid-price = (bid + ask) / 2; falls back to last_price_dollars
+    if quotes are absent.
+    """
     try:
-        # v2 returns prices as dollar strings ("0.6500") or integer cents
-        def _parse_price(val):
+        def _parse(val):
             if val is None:
                 return 0.0
             f = float(val)
-            return f if f <= 1.0 else f / 100   # cents → dollars
+            # API says response_price_units = usd_cent but *_dollars fields
+            # are already in [0,1] dollar format — no conversion needed.
+            return f if f <= 1.0 else f / 100
 
-        yes_bid   = _parse_price(m.get("yes_bid"))
-        yes_ask   = _parse_price(m.get("yes_ask"))
-        yes_price = round((yes_bid + yes_ask) / 2, 4) if yes_ask else yes_bid
+        yes_bid  = _parse(m.get("yes_bid_dollars"))
+        yes_ask  = _parse(m.get("yes_ask_dollars"))
+        last     = _parse(m.get("last_price_dollars"))
 
-        if yes_price <= 0:
-            return None
+        if yes_bid > 0 and yes_ask > 0:
+            yes_price = round((yes_bid + yes_ask) / 2, 4)
+        elif yes_ask > 0:
+            yes_price = yes_ask
+        elif yes_bid > 0:
+            yes_price = yes_bid
+        elif last > 0:
+            yes_price = last
+        else:
+            return None   # no price data — skip
 
-        vol = m.get("volume_24h") or m.get("volume") or 0
+        if not (0.03 <= yes_price <= 0.97):
+            return None   # near-certain or zero — not useful for arb
 
+        # volume_fp is total volume; volume_24h_fp is 24-hour
+        vol = float(m.get("volume_24h_fp") or m.get("volume_fp") or 0)
+
+        # category comes from the event (injected as _category in _fetch_live_markets)
+        category = (m.get("_category") or m.get("category") or "other").lower()
+
+        ticker = m.get("ticker", "")
         return {
             "platform":   "kalshi",
-            "id":         m.get("ticker", m.get("id", "")),
+            "id":         ticker,
             "question":   m.get("title", ""),
-            "category":   m.get("category", "other"),
+            "category":   category,
             "yes_price":  yes_price,
             "no_price":   round(1.0 - yes_price, 4),
-            "volume_usd": float(vol),
-            "end_date":   m.get("close_time", ""),
-            "slug":       m.get("ticker", ""),
-            "url":        f"https://kalshi.com/markets/{m.get('ticker', '')}",
+            "volume_usd": vol,
+            "end_date":   m.get("close_time") or m.get("expiration_time", ""),
+            "slug":       ticker,
+            "url":        f"https://kalshi.com/markets/{ticker}",
         }
     except Exception:
         return None
@@ -180,10 +261,27 @@ def _normalise(m: dict) -> Optional[dict]:
 # Demo mode — synthesise Kalshi markets from live Polymarket data
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _kalshi_rephrase(question: str) -> str:
+    """
+    Convert a Polymarket-style question into Kalshi-style phrasing.
+    Kalshi questions drop the leading "Will" and use a more direct format,
+    creating realistic cross-platform phrasing differences for the AI
+    matching pipeline to resolve.
+    """
+    q = question.strip()
+    if not q:
+        return q
+    q_work = re.sub(r"^[Ww]ill\s+", "", q).rstrip("?").strip()
+    if q_work:
+        q_work = q_work[0].upper() + q_work[1:]
+    return (q_work + "?") if q_work else question
+
+
 def _demo_markets_from_polymarket(limit: int = 100) -> list[dict]:
     """
     Pull live markets from Polymarket and synthesise a matching Kalshi market
     for each one with a small deterministic price offset.
+    Used only when the public Kalshi endpoint is unreachable.
     """
     import hashlib, json as _json
 
@@ -244,7 +342,7 @@ def _demo_markets_from_polymarket(limit: int = 100) -> list[dict]:
             result.append({
                 "platform":   "kalshi",
                 "id":         f"DEMO-{condition_id or slug}",
-                "question":   m.get("question", ""),
+                "question":   _kalshi_rephrase(m.get("question", "")),
                 "category":   cat.lower(),
                 "yes_price":  k_yes,
                 "no_price":   round(1.0 - k_yes, 3),

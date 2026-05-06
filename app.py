@@ -60,53 +60,16 @@ with st.sidebar:
             anthropic_key = _typed_key
             os.environ["ANTHROPIC_API_KEY"] = anthropic_key
 
-    # Kalshi uses RSA-PSS signing — needs a Key ID + PEM private key
-    _kalshi_kid = (
-        st.secrets.get("KALSHI_KEY_ID", "") if hasattr(st, "secrets") else ""
-    ) or os.getenv("KALSHI_KEY_ID", "")
-    _kalshi_pem = (
-        st.secrets.get("KALSHI_PRIVATE_KEY", "") if hasattr(st, "secrets") else ""
-    ) or os.getenv("KALSHI_PRIVATE_KEY", "")
-
-    if not _kalshi_kid:
-        _kalshi_kid = st.text_input(
-            "Kalshi Key ID (optional)",
-            value="",
-            type="password",
-            help="Access-key ID from your Kalshi dashboard. Leave blank for demo mode.",
-        )
-    if not _kalshi_pem:
-        _kalshi_pem = st.text_area(
-            "Kalshi Private Key PEM (optional)",
-            value="",
-            height=100,
-            help="Paste your RSA private key (-----BEGIN RSA PRIVATE KEY-----…). Leave blank for demo mode.",
-        )
-
-    kalshi_key_id  = _kalshi_kid.strip()
-    kalshi_pem     = _kalshi_pem.strip()
-    kalshi_live    = bool(kalshi_key_id and kalshi_pem)
-
     st.divider()
     st.subheader("Filters")
     min_profit = st.slider("Min Gross Profit %", 0.5, 10.0, 1.5, 0.5)
-    min_vol    = st.slider("Min Volume ($)", 0, 500_000, 10_000, 10_000,
+    min_vol    = st.slider("Min Volume ($)", 0, 500_000, 0, 1_000,
                            format="$%d")
     use_ai     = st.checkbox("AI market matching (Claude)", value=bool(anthropic_key))
     n_markets  = st.slider("Markets to fetch per platform", 20, 150, 75, 5)
 
     st.divider()
-    if kalshi_live:
-        if st.button("🔬 Debug Kalshi API", use_container_width=True):
-            with st.spinner("Testing Kalshi endpoints…"):
-                report = _debug_kalshi(kalshi_key_id, kalshi_pem)
-            st.session_state["kalshi_debug"] = report
-        if "kalshi_debug" in st.session_state:
-            with st.expander("Kalshi debug output", expanded=True):
-                st.markdown(st.session_state["kalshi_debug"])
-
-    st.divider()
-    st.caption("Data sources: Kalshi Trade API v2 · Polymarket Gamma API")
+    st.caption("Data sources: Kalshi Public API (no auth) · Polymarket Gamma API")
     st.caption("AI: Anthropic Claude (market matching + analysis)")
     st.caption("ML: XGBoost calibrated classifier")
 
@@ -129,9 +92,10 @@ _tab_scan, _tab_explain, _tab_model = st.tabs(
 # ─────────────────────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=120, show_spinner=False)
-def _fetch_kalshi(n: int, _key_id: str, _pem: str):
-    # Separate cached function so a Kalshi error doesn't also bust the Poly cache
-    return kalshi_markets(limit=n, key_id=_key_id or None, private_key_pem=_pem or None)
+def _fetch_kalshi(n: int):
+    # No auth needed — public endpoint. Separate cache so Kalshi errors
+    # don't bust the Polymarket cache.
+    return kalshi_markets(limit=n)
 
 @st.cache_data(ttl=120, show_spinner=False)
 def _fetch_poly(n: int):
@@ -200,38 +164,6 @@ def _price_bar(km: dict, pm: dict) -> go.Figure:
     return fig
 
 
-def _debug_kalshi(key_id: str, private_key_pem: str) -> str:
-    """Test RSA-PSS signed requests against both Kalshi base URLs."""
-    from src.kalshi_client import _load_private_key, _sign_headers
-    import requests as _req
-
-    lines = []
-
-    try:
-        pk = _load_private_key(private_key_pem)
-    except Exception as e:
-        return f"**Private key parse error:** {e}"
-
-    urls = [
-        ("api.elections.kalshi.com  [canonical]",
-         "https://api.elections.kalshi.com/trade-api/v2/markets",
-         "/trade-api/v2/markets"),
-        ("trading.kalshi.com        [legacy]",
-         "https://trading.kalshi.com/trade-api/v2/markets",
-         "/trade-api/v2/markets"),
-    ]
-    for label, url, path in urls:
-        try:
-            headers = _sign_headers(key_id, pk, "GET", path)
-            r = _req.get(url, params={"status": "open", "limit": 3},
-                         headers=headers, timeout=8)
-            body = r.text[:500]
-            n = len((r.json() if r.ok else {}).get("markets") or [])
-            lines.append(f"**{label}**\n`{r.status_code}` — {n} markets\n```\n{body}\n```")
-        except Exception as e:
-            lines.append(f"**{label}**\nERROR: {e}")
-    return "\n\n---\n\n".join(lines)
-
 
 def _combined_cost_chart(opps: list[dict]) -> go.Figure:
     if not opps:
@@ -271,7 +203,7 @@ with _tab_scan:
         with st.spinner("Fetching markets from Kalshi & Polymarket…"):
             km_list = []
             try:
-                km_list = _fetch_kalshi(n_markets, kalshi_key_id, kalshi_pem)
+                km_list = _fetch_kalshi(n_markets)
             except Exception as e:
                 st.error(f"Kalshi fetch error: {e}")
 
@@ -281,15 +213,16 @@ with _tab_scan:
             except Exception as e:
                 st.error(f"Polymarket fetch error: {e}")
 
-            # Determine whether Kalshi data is live or synthetic demo
+            # Determine whether we got live Kalshi data or fell back to demo
             is_demo = not km_list or any(m.get("is_demo") for m in km_list)
-            if kalshi_live and is_demo:
-                kalshi_source = "demo (live API unreachable)"
-                st.warning("Kalshi live API unreachable — showing synthetic demo markets derived from live Polymarket prices.", icon="⚠️")
-            elif kalshi_live:
-                kalshi_source = "live API"
+            if is_demo:
+                kalshi_source = "demo (public API unreachable)"
+                st.warning(
+                    "Kalshi public API unreachable — showing synthetic demo markets "
+                    "derived from live Polymarket prices.", icon="⚠️"
+                )
             else:
-                kalshi_source = "demo (no credentials)"
+                kalshi_source = "live (public API)"
             status_placeholder.success(
                 f"Fetched {len(km_list)} Kalshi ({kalshi_source}) + {len(pm_list)} Polymarket markets"
             )
