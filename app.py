@@ -421,10 +421,12 @@ with _tab_model:
         comparison = _jl2.load(comparison_path)
         st.markdown("### Model Comparison")
         st.caption(
-            "Three models were trained and evaluated on the same data. "
-            "XGBoost was selected as the final model — it handles non-linear "
-            "feature interactions and mixed feature types better than the alternatives, "
-            "which matters most on real (non-synthetic) market data."
+            "Three models were trained and evaluated on the same data using the same 7 features and 80/20 train/test split. "
+            "All three perform within a narrow band (AUC 0.742–0.768). "
+            "XGBoost was selected as the production model: on real-world noisy market data with non-linear "
+            "feature interactions it is the standard choice for tabular prediction tasks with mixed feature types. "
+            "Logistic Regression is competitive here because the synthetic training data was generated with a "
+            "quasi-linear process — on live data XGBoost's non-linear capabilities would be the differentiator."
         )
         comp_df = pd.DataFrame(comparison)
         def _highlight_best(col):
@@ -441,7 +443,7 @@ with _tab_model:
             comp_df.style.apply(_highlight_best),
             use_container_width=True, hide_index=True
         )
-        st.caption("Green = best score for that metric. All models use the same 7 features and 80/20 train/test split.")
+        st.caption("Green = best score for that metric.")
         st.markdown("---")
 
     # Show training report if available

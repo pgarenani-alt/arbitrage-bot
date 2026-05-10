@@ -347,7 +347,7 @@ def train(df: pd.DataFrame):
     )
     xgb_metrics, model, y_prob = _eval_model(
         xgb_model, X_train, X_test, y_train, y_test, X, y, xgb_cv_base,
-        "XGBoost + Isotonic Cal. (chosen)"
+        "XGBoost + Isotonic Cal."
     )
 
     # ── comparison table ─────────────────────────────────────────────────────
